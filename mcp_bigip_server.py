@@ -11,7 +11,7 @@ app = Flask(__name__)
 # BIG-IP credentials (override via env vars if needed)
 BIGIP_HOST = os.getenv("BIGIP_HOST", "172.16.60.106")
 BIGIP_USER = os.getenv("BIGIP_USER", "admin")
-BIGIP_PASS = os.getenv("BIGIP_PASS", "F5testnet!")
+BIGIP_PASS = os.getenv("BIGIP_PASS", "password")
 
 @app.route("/mcp", methods=["POST"])
 def mcp():
