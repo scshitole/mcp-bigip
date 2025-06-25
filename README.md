@@ -127,3 +127,121 @@ python ai_llm_client.py "List all pools and their members"
 6. Model generates a human-friendly answer.
 
 This flow enables seamless tool invocation and dynamic data retrieval from network devices using AI-driven orchestration. Feel free to customize or extend the functions for your own use cases.
+
+
+Here’s a step-by-step illustration of the raw JSON-RPC exchanges between your client and the MCP server when you ask for pool members.  For simplicity I’m showing only the HTTP bodies (not headers).
+
+---
+
+### 1. Discovering available services
+
+**Client → Server**
+
+```http
+POST /mcp
+Content-Type: application/json
+
+{
+  "jsonrpc": "2.0",
+  "method": "mcp.list_services",
+  "id": 1
+}
+```
+
+**Server → Client**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": ["bigip"]
+}
+```
+
+> The client now knows it can call the “bigip” service.
+
+---
+
+### 2. Calling the `bigip.get_pools` method
+
+**Client → Server**
+
+```http
+POST /mcp
+Content-Type: application/json
+
+{
+  "jsonrpc": "2.0",
+  "method": "bigip.get_pools",
+  "id": 2,
+  "params": {
+    "host": "172.16.60.106",
+    "username": "admin",
+    "password": "xxxxxx"
+  }
+}
+```
+
+**Server → Client**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "result": [
+    {
+      "pool": "web_pool",
+      "members": [
+        "10.0.1.10:80",
+        "10.0.1.11:80"
+      ]
+    },
+    {
+      "pool": "api_pool",
+      "members": [
+        "10.0.2.20:443"
+      ]
+    }
+  ]
+}
+```
+
+> The `result` array contains each pool’s name and list of member endpoints.
+
+---
+
+### 3. Handling errors
+
+If the credentials were wrong, you’d instead see:
+
+**Server → Client**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "error": {
+    "code": -32000,
+    "message": "401 Client Error: Unauthorized for url..."
+  }
+}
+```
+
+Your client detects the `"error"` field and wraps it into:
+
+```json
+{ "error": true, "code": -32000, "message": "401 …" }
+```
+
+which it then feeds back into the LLM for a user-friendly reply.
+
+---
+
+### Summary
+
+1. **mcp.list\_services** → tells the client what services exist.
+2. **bigip.get\_pools** → client sends host/credentials/command, server returns structured data.
+3. **Error** field (instead of `result`) when something goes wrong.
+
+This JSON-RPC pattern (with `"jsonrpc"`, `"method"`, `"params"`, `"id"`, and either `"result"` or `"error"`) is the core **MCP protocol** you’re using under the hood.
+
