@@ -1,3 +1,5 @@
+[![How to Embed a YouTube Video on GitHub README](https://img.youtube.com/vi/5r4h3XXjxeo/0.jpg)](https://youtu.be/5r4h3XXjxeo)
+
 # AI-MCP Client & Server Flow
 
 This repository demonstrates how the AI-powered MCP (Model Context Protocol) client interacts with an MCP server to retrieve pool and member information from an F5 BIG-IP device. Below is a step-by-step explanation of what happens when you run the client:
