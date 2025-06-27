@@ -5,14 +5,25 @@ import sys
 import json
 import requests
 import openai
+from dotenv import load_dotenv
+
+# ─── Load environment variables ─────────────────────────────────────────────────
+load_dotenv()
 
 # ─── Setup ─────────────────────────────────────────────────────────────────────
 openai.api_key = os.getenv("OPENAI_API_KEY")
 if not openai.api_key:
-    raise RuntimeError("Set OPENAI_API_KEY in your environment")
+    raise RuntimeError("Set OPENAI_API_KEY in your .env or environment")
 
 # MCP server endpoint (override via env if needed)
 MCP_URL = os.getenv("MCP_URL", "http://localhost:4000/mcp")
+
+# BIG-IP credentials from .env or env vars
+BIGIP_HOST = os.getenv("BIGIP_HOST")
+BIGIP_USER = os.getenv("BIGIP_USER")
+BIGIP_PASS = os.getenv("BIGIP_PASS")
+if not (BIGIP_HOST and BIGIP_USER and BIGIP_PASS):
+    raise RuntimeError("Set BIGIP_HOST, BIGIP_USER, and BIGIP_PASS in your .env or environment")
 
 # ─── RPC helper ────────────────────────────────────────────────────────────────
 def rpc_call(rpc_method: str, params: dict = None, id_: int = 1):
@@ -21,7 +32,7 @@ def rpc_call(rpc_method: str, params: dict = None, id_: int = 1):
     resp.raise_for_status()
     return resp.json()
 
-# ─── Define functions for BIG-IP integration ───────────────────────────────────
+# ─── Define Functions for BIG-IP integration ───────────────────────────────────
 functions = [
     {
         "name": "bigip_run_tmsh",
@@ -29,7 +40,7 @@ functions = [
         "parameters": {
             "type": "object",
             "properties": {
-                "command": { "type": "string", "description": "The tmsh command to execute, e.g. 'show ltm virtual all-properties'" }
+                "command": {"type": "string", "description": "TMSH command to execute, e.g., 'show ltm virtual all-properties'"}
             },
             "required": ["command"]
         }
@@ -37,80 +48,83 @@ functions = [
     {
         "name": "bigip_get_virtuals",
         "description": "Retrieve a list of LTM virtual servers from F5 BIG-IP.",
-        "parameters": { "type": "object", "properties": {}, "required": [] }
+        "parameters": {"type": "object", "properties": {}, "required": []}
     },
     {
         "name": "bigip_get_pools",
         "description": "List all LTM pools and their members from F5 BIG-IP.",
-        "parameters": { "type": "object", "properties": {}, "required": [] }
+        "parameters": {"type": "object", "properties": {}, "required": []}
     }
 ]
 
 # ─── Entry point ───────────────────────────────────────────────────────────────
 def main():
-    # Accept the query as a CLI argument
     if len(sys.argv) < 2:
         print("Usage: python ai_llm_client.py \"<BIG-IP query>\"")
         sys.exit(1)
     user_input = sys.argv[1]
 
-    # Build conversation history
     messages = [
         {
             "role": "system",
             "content": (
-                "You can call these functions on the MCP server:\n"
+                "Available functions on MCP server:\n"
                 "- bigip_run_tmsh(command): run a TMSH command on BIG-IP.\n"
-                "- bigip_get_virtuals(): list LTM virtual servers.\n"
-                "- bigip_get_pools(): list all pools and their member names.\n"
-                "Pick the function that best matches the user's request."
+                "- bigip_get_virtuals(): list virtual servers.\n"
+                "- bigip_get_pools(): list pools and their members.\n"
+                "Provide the appropriate function call to answer the user's request."
             )
         },
-        { "role": "user", "content": user_input }
+        {"role": "user", "content": user_input}
     ]
 
-    # 1) Let the model choose the function
+    # 1) Ask model to select function
     response = openai.chat.completions.create(
         model="gpt-4o-mini",
         messages=messages,
         functions=functions,
         function_call="auto",
-        temperature=0,
+        temperature=0
     )
     msg = response.choices[0].message
 
-    # 2) Execute the chosen function
+    # 2) Execute function call if present
     if msg.function_call:
         fn_name = msg.function_call.name
         fn_args = json.loads(msg.function_call.arguments)
-        # Map 'bigip_run_tmsh' -> 'bigip.run_tmsh', similarly for others
+
+        # Inject BIG-IP credentials
+        fn_args.update({
+            "host": BIGIP_HOST,
+            "username": BIGIP_USER,
+            "password": BIGIP_PASS
+        })
+
         rpc_method = fn_name.replace("_", ".", 1)
         rpc_resp = rpc_call(rpc_method, fn_args)
 
-        # Determine result or error
         if "error" in rpc_resp:
             err = rpc_resp["error"]
             fn_result = {"error": True, "code": err.get("code"), "message": err.get("message")}        
         else:
             fn_result = rpc_resp.get("result")
 
-        # Append function_call and its result
+        # Append function call and result
         messages.append({
             "role": "assistant",
             "content": None,
-            "function_call": { "name": fn_name, "arguments": msg.function_call.arguments }
+            "function_call": {"name": fn_name, "arguments": json.dumps(fn_args)}
         })
         messages.append({"role": "function", "name": fn_name, "content": json.dumps(fn_result)})
 
-        # 3) Finalize with model response
+        # 3) Get final human-readable answer
         final = openai.chat.completions.create(
             model="gpt-4o-mini",
             messages=messages,
-            temperature=0,
+            temperature=0
         )
         print(final.choices[0].message.content)
     else:
-        # No function call: output direct reply
         print(msg.content)
 
 if __name__ == "__main__":
